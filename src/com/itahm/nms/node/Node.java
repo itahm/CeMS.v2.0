@@ -19,13 +19,9 @@ abstract public class Node implements Runnable, Closeable, Listenable {
 	protected int timeout = 5000;
 	protected int retry = 1;
 	protected final Thread thread;
-	private Boolean status;
+	private boolean status = true;
 	private final BlockingQueue<Long> queue = new LinkedBlockingQueue<>();
 	private final ArrayList<Listener> listenerList = new ArrayList<>();
-	
-	public Node(long id) {
-		this(id, String.format("Node [%d]", id));
-	}
 	
 	public Node(long id, String name) {
 		this.id = id;
@@ -82,9 +78,7 @@ abstract public class Node implements Runnable, Closeable, Listenable {
 		boolean status = rtt > -1;
 		boolean issue = false;
 		
-		if (this.status == null) {
-			this.status = status;
-		} else if (this.status != status) {
+		if (this.status != status) {
 			this.status = status;
 			
 			issue = true;
@@ -122,6 +116,10 @@ abstract public class Node implements Runnable, Closeable, Listenable {
 	
 	public void setRetry(int i) {
 		this.retry = i;
+	}
+	
+	public void setStatus(boolean status) {
+		this.status = status;
 	}
 	
 	public void ping(long delay) {

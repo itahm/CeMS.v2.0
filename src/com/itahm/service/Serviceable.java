@@ -1,12 +1,11 @@
 package com.itahm.service;
 
-import com.itahm.http.Request;
+import java.io.Closeable;
+
+import com.itahm.http.Reques;
 import com.itahm.http.Response;
 import com.itahm.json.JSONObject;
 
-public interface Serviceable {
-	public void start();
-	public void stop();
-	public boolean isRunning();
-	public boolean service(Request request, Response response, JSONObject data);
+public interface Serviceable extends Closeable  {
+	public boolean service(Reques request, Response response, JSONObject data);
 }

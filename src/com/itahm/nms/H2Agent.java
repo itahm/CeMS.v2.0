@@ -26,7 +26,7 @@ import org.snmp4j.smi.Variable;
 
 import com.itahm.json.JSONArray;
 import com.itahm.json.JSONObject;
-import com.itahm.nms.SmartSearch.Profile;
+import com.itahm.nms.Bean.Profile;
 import com.itahm.nms.Commander;
 import com.itahm.nms.NodeEventReceivable;
 import com.itahm.nms.NodeManager;
@@ -34,9 +34,11 @@ import com.itahm.nms.SmartSearch;
 import com.itahm.nms.Batch;
 import com.itahm.nms.Bean.*;
 import com.itahm.nms.Bean.Rule.Rolling;
+import com.itahm.nms.node.ICMPNode;
 import com.itahm.nms.node.PDUManager;
-import com.itahm.nms.node.SeedNode.Arguments;
+import com.itahm.nms.node.SNMPNode;
 import com.itahm.nms.node.SeedNode.Protocol;
+import com.itahm.nms.node.TCPNode;
 import com.itahm.nms.parser.*;
 import com.itahm.util.Listener;
 import com.itahm.util.Network;
@@ -269,6 +271,20 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				/**END**/
 				
 				/**
+				 * USER
+				 */
+				try (Statement stmt = c.createStatement()) {
+					stmt.executeUpdate("CREATE TABLE IF NOT EXISTS t_user"+
+						" (id VARCHAR PRIMARY KEY"+
+						", name VARCHAR NOT NULL"+
+						", email VARCHAR DEFAULT NULL"+
+						", sms VARCHAR DEFAULT NULL"+
+						", event BOOLEAN NOT NULL DEFAULT FALSE"+
+						");");
+				}
+				/**END**/
+				
+				/**
 				 * NODE
 				 */
 				try (Statement stmt = c.createStatement()) {
@@ -279,8 +295,12 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 						", ip VARCHAR DEFAULT NULL UNIQUE"+
 						", _group VARCHAR NOT NULL DEFAULT 'node'"+
 						", label VARCHAR DEFAULT NULL"+
-						", extra VARCHAR DEFAULT NULL);");
+						", manager VARCHAR DEFAULT NULL"+
+						", extra VARCHAR DEFAULT NULL"+
+						", CONSTRAINT FK_USR_NOD FOREIGN KEY(manager) REFERENCES t_user(id)"+
+						");");
 				}
+				
 				/**END**/
 
 				/**
@@ -300,15 +320,46 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				/**END**/
 
 				/**
+				 * FACILITY
+				 **/
+				try (Statement stmt = c.createStatement()) {
+					stmt.executeUpdate("CREATE TABLE IF NOT EXISTS t_facility"+
+						" (id INT PRIMARY KEY AUTO_INCREMENT"+
+						", name VARCHAR NOT NULL"+
+						", type VARCHAR NOT NULL"+
+						", unit INT NOT NULL DEFAULT 0"+
+						", image VARCHAR NOT NULL DEFAULT ''"+
+						", width INT NOT NULL"+
+						", height INT NOT NULL"+
+						", depth INT NOT NULL"+
+						", rotate INT NOT NULL DEFAULT 0);");
+				}
+				/**END**/
+				
+				/**
+				 * RACK
+				 **/
+				try (Statement stmt = c.createStatement()) {
+					stmt.executeUpdate("CREATE TABLE IF NOT EXISTS t_rack"+
+						" (id INT PRIMARY KEY AUTO_INCREMENT"+
+						", name VARCHAR NOT NULL"+
+						", x INT NOT NULL DEFAULT 0"+
+						", y INT NOT NULL DEFAULT 0"+
+						", unit INT NOT NULL DEFAULT 42);");
+				}
+				/**END**/
+				
+				/**
 				 * LOCATION
 				 **/
 				try (Statement stmt = c.createStatement()) {
 					stmt.executeUpdate("CREATE TABLE IF NOT EXISTS t_location"+
 						" (node BIGINT PRIMARY KEY"+
 						", maker VARCHAR NOT NULL"+
-						", name VARCHAR NOT NULL"+
+						", model VARCHAR NOT NULL"+
 						", rack INT NOT NULL"+
 						", position INT NOT NULL"+
+						", CONSTRAINT FK_RACK_LOC FOREIGN KEY(rack) REFERENCES t_facility(id) ON DELETE CASCADE"+
 						", CONSTRAINT FK_NOD_LOC FOREIGN KEY(node) REFERENCES t_node(id) ON DELETE CASCADE"+
 						");");
 				}
@@ -369,9 +420,9 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 						" (name VARCHAR PRIMARY KEY"+
 						", protocol VARCHAR NOT NULL DEFAULT 'udp'"+
 						", port INT NOT NULL DEFAULT 161"+
-						", version VARCHAR NOT NULL DEFAULT 'v2c'"+
+						", version INT NOT NULL DEFAULT 0"+
 						", security VARCHAR NOT NULL DEFAULT 'public'"+
-						", level INT DEFAULT NULL"+
+						", level INT NOT NULL DEFAULT 0"+
 						", auth_protocol VARCHAR DEFAULT NULL"+
 						", auth_key VARCHAR DEFAULT NULL"+
 						", priv_protocol VARCHAR DEFAULT NULL"+
@@ -388,23 +439,10 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 						", protocol VARCHAR NOT NULL"+
 						", status BOOLEAN NOT NULL DEFAULT TRUE"+
 						", snmp INT NOT NULL DEFAULT 0"+
-						", profile VARCHAR DEFAULT NULL"+
+						", profile VARCHAR DEFAULT NULL"+   
 						", CONSTRAINT FK_PRF_MON FOREIGN KEY(profile) REFERENCES t_profile(name)"+
 						", CONSTRAINT FK_NOD_MON FOREIGN KEY(id) REFERENCES t_node(id) ON DELETE CASCADE"+
 						");");
-				}
-				/**END**/
-				
-				/**
-				 * RACK
-				 **/
-				try (Statement stmt = c.createStatement()) {
-					stmt.executeUpdate("CREATE TABLE IF NOT EXISTS t_rack"+
-						" (id INT PRIMARY KEY AUTO_INCREMENT"+
-						", name VARCHAR NOT NULL"+
-						", x INT NOT NULL DEFAULT 0"+
-						", y INT NOT NULL DEFAULT 0"+
-						", unit INT NOT NULL DEFAULT 42);");
 				}
 				/**END**/
 				
@@ -419,14 +457,16 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				/**END**/
 				
 				/**
-				 * USER
+				 * MANAGER
 				 */
 				try (Statement stmt = c.createStatement()) {
-					stmt.executeUpdate("CREATE TABLE IF NOT EXISTS t_user"+
-						" (name VARCHAR DEFAULT NULL"+
-						", email VARCHAR DEFAULT NULL"+
-						", sms VARCHAR DEFAULT NULL"+
-						", PRIMARY KEY(name));");
+					stmt.executeUpdate("CREATE TABLE IF NOT EXISTS t_manager"+
+						" (user VARCHAR"+
+						", node BIGINT"+
+						", timestamp BIGINT NOT NULL"+
+						", CONSTRAINT FK_USR_MGR FOREIGN KEY(user) REFERENCES t_user(id)"+
+						", CONSTRAINT FK_NOD_MGR FOREIGN KEY(node) REFERENCES t_node(id)"+
+						");");
 				}
 				/**END**/
 				
@@ -546,21 +586,6 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 			}
 			
 			try (Statement stmt = c.createStatement()) {
-				try (ResultSet rs = stmt.executeQuery("SELECT name"+
-					" FROM t_position"+
-					" WHERE name='position';")) {
-					if (!rs.next()) {
-						try (PreparedStatement pstmt = c.prepareStatement("INSERT"+
-							" INTO t_position (name)"+
-							" VALUES ('position');")) {
-							
-							pstmt.executeUpdate();
-						}
-					}
-				}
-			}
-			
-			try (Statement stmt = c.createStatement()) {
 				try (ResultSet rs = stmt.executeQuery("SELECT"+
 					" COALESCE(MAX(id), 0)"+
 					" FROM t_node")) {
@@ -643,7 +668,34 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 		
 		return false;
 	}
-		
+	
+	@Override
+	public boolean addFacility(JSONObject facility) throws SQLException {
+		long ttt = System.currentTimeMillis();
+		try (Connection c = this.connPool.getConnection()) {
+			try (PreparedStatement pstmt = c.prepareStatement("INSERT INTO t_facility"+
+				" (name, type, width, height, depth, rotate, unit, image)"+
+				" VALUES(?, ?, ?, ?, ?, ?, ?, ?);")) {
+				pstmt.setString(1, facility.getString("name"));
+				pstmt.setString(2, facility.getString("type"));
+				pstmt.setInt(3, facility.getInt("width"));
+				pstmt.setInt(4, facility.getInt("height"));
+				pstmt.setInt(5, facility.getInt("depth"));
+				pstmt.setInt(6, facility.getInt("rotate"));
+				pstmt.setInt(7, facility.getInt("unit"));
+				pstmt.setString(8, facility.getString("image"));
+				
+				pstmt.executeUpdate();
+			}
+			
+			return true;
+		} finally {
+			if (System.currentTimeMillis() - ttt > 30000) {
+				new Exception().printStackTrace();
+			}
+		}
+	}
+	
 	@Override
 	public JSONObject addIcon(String type, JSONObject icon) {
 		long ttt = System.currentTimeMillis();
@@ -835,17 +887,18 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("INSERT"+
 				" INTO t_profile"+
-				" (name, protocol, port, version, security, auth_protocol, auth_key, priv_protocol, priv_key)"+
-				" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);")) {
+				" (name, protocol, port, version, security, level, auth_protocol, auth_key, priv_protocol, priv_key)"+
+				" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")) {
 				pstmt.setString(1, profile.getString("name"));
 				pstmt.setString(2, profile.getString("protocol"));
 				pstmt.setInt(3, profile.getInt("port"));
-				pstmt.setString(4, profile.getString("version"));
+				pstmt.setInt(4, profile.getInt("version"));
 				pstmt.setString(5, profile.getString("security"));
-				pstmt.setString(6, profile.has("authProtocol")? profile.getString("authProtocol"): null);
-				pstmt.setString(7, profile.has("authKey")? profile.getString("authKey"): null);
-				pstmt.setString(8, profile.has("privProtocol")? profile.getString("privProtocol"): null);
-				pstmt.setString(9, profile.has("privKey")? profile.getString("privKey"): null);
+				pstmt.setInt(6, profile.getInt("level"));
+				pstmt.setString(7, profile.has("authProtocol")? profile.getString("authProtocol"): null);
+				pstmt.setString(8, profile.has("authKey")? profile.getString("authKey"): null);
+				pstmt.setString(9, profile.has("privProtocol")? profile.getString("privProtocol"): null);
+				pstmt.setString(10, profile.has("privKey")? profile.getString("privKey"): null);
 				
 				pstmt.executeUpdate();
 			}
@@ -888,24 +941,27 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 	}
 	
 	@Override
-	public boolean addUser(String name, JSONObject user) {
+	public boolean addUser(String id, JSONObject user) {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
-			try (PreparedStatement pstmt = c.prepareStatement("INSERT INTO t_user (name, email, sms)"+
-				" VALUES(?, ?, ?);")) {
-				pstmt.setString(1, name);
+			try (PreparedStatement pstmt = c.prepareStatement("INSERT INTO t_user (id, name, email, sms, event)"+
+				" VALUES(?, ?, ?, ?, ?);")) {
+				pstmt.setString(1, id);
+				pstmt.setString(2, user.getString("name"));	
 				
 				if (user.has("email")) {
-					pstmt.setString(2, user.getString("email"));	
-				} else {
-					pstmt.setNull(2, Types.NULL);
-				}
-				
-				if (user.has("sms")) {
-					pstmt.setString(3, user.getString("sms"));	
+					pstmt.setString(3, user.getString("email"));	
 				} else {
 					pstmt.setNull(3, Types.NULL);
 				}
+				
+				if (user.has("sms")) {
+					pstmt.setString(4, user.getString("sms"));	
+				} else {
+					pstmt.setNull(4, Types.NULL);
+				}
+				
+				pstmt.setBoolean(5, user.getBoolean("event"));
 				
 				pstmt.executeUpdate();
 			}
@@ -994,7 +1050,7 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 	}
 	
 	@Override
-	public JSONObject getBody() {
+	public JSONObject getBody() throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (Statement stmt = c.createStatement()) {
@@ -1017,19 +1073,15 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					return bodyData;
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
-	public JSONObject getBody(long id) {
+	public JSONObject getBody(long id) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
@@ -1047,22 +1099,20 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 							.put("unit", rs.getInt(3))
 							.put("front", rs.getString(4))
 							.put("rear", rs.getString(5));
+					} else {
+						return null;
 					}
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
-	public JSONObject getBranch(long id) {
+	public JSONObject getBranch(long id) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
@@ -1098,22 +1148,20 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 						}
 						
 						return branch;
+					} else {
+						return null;
 					}
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
-	public JSONObject getEvent(long eventID) {
+	public JSONObject getEvent(long eventID) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
@@ -1150,22 +1198,20 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 						}
 						
 						return event;
+					} else {
+						return null;
 					}
 				}
 			} 
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
-	public JSONObject getEvent(JSONObject search) {
+	public JSONObject getEvent(JSONObject search) throws SQLException {
 		long
 			start = search.getLong("start"),
 			end = search.getLong("end");
@@ -1237,19 +1283,15 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					return eventData;
 				}
 			} 
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
-	public JSONObject getEventByDate(long date) {
+	public JSONObject getEventByDate(long date) throws SQLException {
 		Calendar calendar = Calendar.getInstance();
 		
 		calendar.setTimeInMillis(date);
@@ -1302,8 +1344,38 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					return eventData;
 				}
 			} 
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
+		} finally {
+			if (System.currentTimeMillis() - ttt > 30000) {
+				new Exception().printStackTrace();
+			}
+		}
+	}
+
+	@Override
+	public JSONObject getFacility(long id) throws SQLException {
+		long ttt = System.currentTimeMillis();
+		try (Connection c = this.connPool.getConnection()) {
+			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
+				" name, type, unit, image, width, height, depth, rotate"+
+				" FROM t_facility"+
+				" WHERE id=?;")) {
+				pstmt.setLong(1, id);
+				
+				try (ResultSet rs = pstmt.executeQuery()) {
+					if (rs.next()) {
+						return new JSONObject()
+							.put("id", id)
+							.put("name", rs.getString(1))
+							.put("type", rs.getString(2))
+							.put("unit", rs.getInt(3))
+							.put("image", rs.getString(4))
+							.put("width", rs.getInt(5))
+							.put("height", rs.getInt(6))
+							.put("depth", rs.getInt(7))
+							.put("rotate", rs.getInt(8));
+					}
+				}
+			}
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
@@ -1312,9 +1384,42 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 		
 		return null;
 	}
-
+	
 	@Override
-	public JSONObject getIcon() {
+	public JSONObject getFacility() throws SQLException {
+		long ttt = System.currentTimeMillis();
+		try (Connection c = this.connPool.getConnection()) {
+			try (Statement stmt = c.createStatement()) {
+				try (ResultSet rs = stmt.executeQuery("SELECT"+
+					" id, name, type, unit, image, width, height, depth, rotate"+
+					" FROM t_facility;")) {
+					JSONObject facilityData = new JSONObject();
+					
+					while (rs.next()) {
+						facilityData.put(Long.toString(rs.getLong(1)), new JSONObject()
+							.put("id", rs.getLong(1))
+							.put("name", rs.getString(2))
+							.put("type", rs.getString(3))
+							.put("unit", rs.getInt(4))
+							.put("image", rs.getString(5))
+							.put("width", rs.getInt(6))
+							.put("height", rs.getInt(7))
+							.put("depth", rs.getInt(8))
+							.put("rotate", rs.getInt(9)));
+					}
+					
+					return facilityData;
+				}
+			}
+		} finally {
+			if (System.currentTimeMillis() - ttt > 30000) {
+				new Exception().printStackTrace();
+			}
+		}
+	}
+	
+	@Override
+	public JSONObject getIcon() throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (Statement stmt = c.createStatement()) {
@@ -1334,19 +1439,15 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				
 				return iconData;
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
-	public JSONObject getIcon(String type) {
+	public JSONObject getIcon(String type) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT type, _group, src, disabled, shutdown"+
@@ -1362,18 +1463,16 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 							.put("src", rs.getString(3))
 							.put("disabled", rs.getString(4))
 							.put("shutdown", rs.getString(5));
+					} else {
+						return null;
 					}
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
@@ -1388,21 +1487,18 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					c.get(Calendar.YEAR),
 					c.get(Calendar.MONTH) +1,
 					c.get(Calendar.DAY_OF_MONTH)))));
-			} catch (Exception e) {
-		}
+			} catch (Exception e) {}
 		
 		body.put("maxConnection", this.connPool.getActiveConnections());
-		//body.put("resource", resourceManager.size());
 		
 		return body;
 	}
 
 	@Override
-	public JSONObject getLimit() {
+	public JSONObject getLimit() throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (Statement stmt = c.createStatement()) {
-				
 				try (ResultSet rs = stmt.executeQuery("SELECT"+
 					" id, oid, _index, _limit"+
 					" FROM t_critical"+
@@ -1419,16 +1515,12 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					
 					return new JSONObject().put("criticals", criticals);
 				}
-			} 
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
+			}
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
@@ -1440,7 +1532,7 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 	}
 	
 	@Override
-	public JSONObject getLink() {
+	public JSONObject getLink() throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (Statement stmt = c.createStatement()) {
@@ -1492,19 +1584,15 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				
 				return linkData;
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
-	public JSONObject getLink(long path) {
+	public JSONObject getLink(long path) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
@@ -1545,29 +1633,23 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 						linkData.put(Long.toString(rs.getLong(1)), link);
 					}
 				}
-			
-				if (linkData.keySet().size() > 0) {
-					return linkData;
-				}
+				
+				return linkData;
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
-	public JSONObject getLocation() {
+	public JSONObject getLocation() throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (Statement stmt = c.createStatement()) {
 				try (ResultSet rs = stmt.executeQuery("SELECT"+
-					" node, maker, L.name, rack, position, N.name, ip"+
+					" node, maker, L.model, rack, position, N.name, ip"+
 					" FROM t_location AS L"+
 					" LEFT JOIN t_node AS N"+
 					" ON node=N.id;")) {
@@ -1579,7 +1661,7 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 						location = new JSONObject()
 							.put("node", rs.getLong(1))
 							.put("maker", rs.getString(2))
-							.put("name", rs.getString(3))
+							.put("model", rs.getString(3))
 							.put("rack", rs.getInt(4))
 							.put("position", rs.getInt(5));
 						
@@ -1601,83 +1683,115 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					return locationData;
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
-	public JSONObject getLocation(long node) {
+	public JSONObject getLocation(long rack) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
-				" maker, L.name, rack, position, N.name, ip"+
+				" node, maker, L.model, rack, position, N.name, ip"+
 				" FROM t_location AS L"+
 				" LEFT JOIN t_node AS N"+
 				" ON node=N.id"+
-				" WHERE node=?;")) {
-				pstmt.setLong(1, node);
+				" WHERE rack=?;")) {
+				pstmt.setLong(1, rack);
 				
 				try (ResultSet rs = pstmt.executeQuery()) {
-					if (rs.next()) {
-						JSONObject location = new JSONObject();
-						String value;
-						
-						location
-							.put("node", node)
-							.put("maker", rs.getString(1))
-							.put("name", rs.getString(2))
-							.put("rack", rs.getInt(3))
-							.put("position", rs.getInt(4));
-						
-						value = rs.getString(5);
-						
-						if (!rs.wasNull()) {
-							location.put("node_name", value);
-						}
+					JSONObject locationData = new JSONObject();
+					JSONObject location;
+					String value;
+					
+					while (rs.next()) {
+						location = new JSONObject()
+							.put("node", rs.getLong(1))
+							.put("maker", rs.getString(2))
+							.put("model", rs.getString(3))
+							.put("rack", rs.getInt(4))
+							.put("position", rs.getInt(5));
 						
 						value = rs.getString(6);
 						
 						if (!rs.wasNull()) {
-							location.put("node_ip", value);
+							location.put("name", value);
+						} else {
+							value = rs.getString(7);
+							
+							if (!rs.wasNull()) {
+								location.put("name", value);
+							}
 						}
 						
-						return location;
+						locationData.put(Long.toString(rs.getLong(1)), location);
 					}
+					
+					return locationData;
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
-	public JSONObject getNode(String filter) {
+	public JSONObject getManager(long node) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
-			JSONObject nodeData = new JSONObject();
+			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
+				" M.user, U.name, N.name, M.timestamp"+
+				" FROM t_manager AS M"+
+				" LEFT JOIN t_node AS N"+
+				" ON M.node=N.id"+
+				" LEFT JOIN t_user AS U"+
+				" ON M.user=U.id"+
+				" WHERE M.node=?;")) {
+				pstmt.setLong(1, node);
 				
-			long id;
-			
+				try (ResultSet rs = pstmt.executeQuery()) {
+					JSONObject
+						managerData = new JSONObject(),
+						manager;
+					String value;
+					
+					while (rs.next()) {
+						manager = new JSONObject();
+					
+						manager.put("id", rs.getString(1));
+						manager.put("user", rs.getString(2));
+						
+						value = rs.getString(3);
+						
+						if (!rs.wasNull()) {
+							manager.put("node", value);
+						}
+						
+						managerData.put(Long.toString(rs.getLong(4)), manager);
+					}
+					
+					return managerData;
+				}
+			}
+		} finally {
+			if (System.currentTimeMillis() - ttt > 30000) {
+				new Exception().printStackTrace();
+			}
+		}
+	}
+	
+	@Override
+	public JSONObject getNode(String filter) throws SQLException {
+		long ttt = System.currentTimeMillis();
+		try (Connection c = this.connPool.getConnection()) {
 			try (Statement stmt = c.createStatement()) {
-				JSONObject node;
-				String value;
-				boolean status;
-				
 				try (ResultSet rs = stmt.executeQuery(String.format("SELECT"+
-					" N.id, N.name, N.type, ip, label, extra, M.protocol, M.status, L.node, COUNT(C.critical)"+
+					" N.id, N.name, N.type, ip, label, manager, extra, M.protocol, M.status, L.node, COUNT(C.critical)"+
 					" FROM t_node AS N"+
 					" LEFT JOIN t_monitor AS M"+
 					" ON N.id=M.id"+
@@ -1688,6 +1802,13 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					" WHERE %s"+
 					" GROUP BY N.id"+
 					";", filter == null? "TRUE": String.format("_group='%s'", filter)))) {
+					JSONObject
+						nodeData = new JSONObject(),
+						node;
+					long id;
+					String value;
+					boolean status;
+					
 					while (rs.next()) {
 						id = rs.getLong(1);
 						
@@ -1720,57 +1841,59 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 						value = rs.getString(6);
 						
 						if (!rs.wasNull()) {
-							node.put("extra", value);
+							node.put("manager", value);
 						}
 						
 						value = rs.getString(7);
 						
 						if (!rs.wasNull()) {
+							node.put("extra", value);
+						}
+						
+						value = rs.getString(8);
+						
+						if (!rs.wasNull()) {
 							node.put("protocol", value);
 						}
 						
-						status = rs.getBoolean(8);
+						status = rs.getBoolean(9);
 						
 						if (!rs.wasNull()) {
 							node.put("status", status);
 						}
 						
-						rs.getLong(9);
+						rs.getLong(10);
 						
 						if (!rs.wasNull()) {
 							node.put("location", true);
 						}
 						
-						if (rs.getInt(10) > 0) {
+						if (rs.getInt(11) > 0) {
 							node.put("critical", true);
 						}
 						
 						nodeData.put(Long.toString(id), node);
 					}
+					
+					return nodeData;
 				}
 			}
-			
-			return nodeData;
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
-	public JSONObject getNode(long id, boolean resource) {
+	public JSONObject getNode(long id, boolean resource) throws SQLException {
 		JSONObject node = new JSONObject();
 		boolean status;
 		
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
-				" N.id, name, type, ip, label, extra, M.protocol, M.status, profile, address, subaddr, phone, lat, lng"+
+				" N.id, name, type, ip, label, manager, extra, M.protocol, M.status, profile, address, subaddr, phone, lat, lng"+
 				" FROM t_node AS N"+
 				" LEFT JOIN t_monitor AS M"+
 				" ON N.id = M.id"+
@@ -1813,43 +1936,49 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 						value = rs.getString(6);
 						
 						if (!rs.wasNull()) {
-							node.put("extra", value);
+							node.put("manager", value);
 						}
 						
 						value = rs.getString(7);
 						
 						if (!rs.wasNull()) {
+							node.put("extra", value);
+						}
+						
+						value = rs.getString(8);
+						
+						if (!rs.wasNull()) {
 							node.put("protocol", value);
 						}
 						
-						status = rs.getBoolean(8);
+						status = rs.getBoolean(9);
 						
 						if (!rs.wasNull()) {
 							node.put("status", status);
 						}
 						
-						value = rs.getString(9);
+						value = rs.getString(10);
 						
 						if (!rs.wasNull()) {
 							node.put("profile", value);
 						}
 						
-						value = rs.getString(10);
+						value = rs.getString(11);
 						
 						if (!rs.wasNull()) {
 							JSONObject branch = new JSONObject();
 							
 							branch.put("address", value);
-							branch.put("subaddr", rs.getString(11));
-							branch.put("phone", rs.getString(12));
+							branch.put("subaddr", rs.getString(12));
+							branch.put("phone", rs.getString(13));
 							
-							value = rs.getString(13);
+							value = rs.getString(14);
 							
 							if (!rs.wasNull()) {
 								branch.put("lat", value);
 							}
 							
-							value = rs.getString(14);
+							value = rs.getString(15);
 							
 							if (!rs.wasNull()) {
 								branch.put("lng", value);
@@ -1857,37 +1986,35 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 							
 							node.put("branch", branch);
 						}
+			
+						if (resource) {
+							node.put("resource", resourceManager.get(id));
+						}
+						
+						return node;
+					} else {
+						return null;
 					}
 				}
 			}
-			
-			if (resource) {
-				node.put("resource", resourceManager.get(id));
-			}
-			
-			return node;
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
-	public JSONObject getPath() {
+	public JSONObject getPath() throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
-			try (Statement stmt = c.createStatement()) {
-				JSONObject pathData = new JSONObject();
-				long id;
-				
+			try (Statement stmt = c.createStatement()) {				
 				try (ResultSet rs = stmt.executeQuery("SELECT"+
 					" id, node_from, node_to, type, color, size"+
 					" FROM t_path;")) {
+					JSONObject pathData = new JSONObject();
+					long id;
+					
 					while (rs.next()) {
 						id = rs.getLong(1);
 						
@@ -1903,19 +2030,15 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					return pathData;
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
-	public JSONObject getPath(long nodeFrom, long nodeTo) {
+	public JSONObject getPath(long nodeFrom, long nodeTo) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
@@ -1927,31 +2050,27 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				
 				try (ResultSet rs = pstmt.executeQuery()) {
 					if (rs.next()) {
-						JSONObject path = new JSONObject()
+						return new JSONObject()
 							.put("id", rs.getLong(1))
 							.put("nodeFrom", nodeFrom)
 							.put("nodeTo", nodeTo)
 							.put("type", rs.getString(2))
 							.put("color", rs.getString(3))
 							.put("size", rs.getInt(4));
-						
-						return path;
+					} else {
+						return null;
 					}
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
-	public JSONObject getPosition(String name) {
+	public JSONObject getPosition(String name) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT position"+
@@ -1962,42 +2081,37 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				try (ResultSet rs = pstmt.executeQuery()) {
 					if (rs.next()) {
 						return new JSONObject(rs.getString(1));
+					} else {
+						return null;
 					}
 				}
 			} 
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
-	public JSONObject getProfile() {
+	public JSONObject getProfile() throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
-			try (Statement stmt = c.createStatement()) {
-				JSONObject
-					profileData = new JSONObject(),
-					profile;
-				
-				try (ResultSet rs = stmt.executeQuery("SELECT name, protocol, port, version, security, COALESCE(level, 0), auth_protocol, auth_key, priv_protocol, priv_key"+
+			try (Statement stmt = c.createStatement()) {				
+				try (ResultSet rs = stmt.executeQuery("SELECT name, protocol, port, version, security, level, auth_protocol, auth_key, priv_protocol, priv_key"+
 					" FROM t_profile;")) {
+					JSONObject
+						profileData = new JSONObject(),
+						profile;
+					
 					while (rs.next()) {
 						profile = new JSONObject()
 							.put("name", rs.getString(1))
 							.put("protocol", rs.getString(2))
 							.put("port", rs.getInt(3))
-							.put("version", rs.getString(4))
-							.put("security", rs.getString(5));
-						
-						if (rs.getInt(6) > 0) {
-							profile.put("level", rs.getInt(6));
-						}
+							.put("version", rs.getInt(4))
+							.put("security", rs.getString(5))
+							.put("level", rs.getInt(6));
 						
 						if (rs.getString(7) != null) {
 							profile.put("authProtocol", rs.getString(6));
@@ -2021,22 +2135,18 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					return profileData;
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
-	public JSONObject getProfile(String name) {
+	public JSONObject getProfile(String name) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
-			try (PreparedStatement pstmt = c.prepareStatement("SELECT protocol, port, version, security, COALESCE(level, 0), auth_protocol, auth_key, priv_protocol, priv_key"+ 
+			try (PreparedStatement pstmt = c.prepareStatement("SELECT protocol, port, version, security, level, auth_protocol, auth_key, priv_protocol, priv_key"+ 
 				" FROM t_profile"+
 				" WHERE name=?;")) {
 				pstmt.setString(1, name);
@@ -2047,12 +2157,9 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 							.put("name", name)
 							.put("protocol", rs.getString(1))
 							.put("port", rs.getInt(2))
-							.put("version", rs.getString(3))
-							.put("security", rs.getString(4));
-					
-						if (rs.getInt(5)> 0) {
-							profile.put("level", rs.getInt(5));
-						}
+							.put("version", rs.getInt(3))
+							.put("security", rs.getString(4))
+							.put("level", rs.getInt(5));
 						
 						if (rs.getString(6) != null) {
 							profile.put("authProtocol", rs.getString(5));
@@ -2071,22 +2178,20 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 						}
 						
 						return profile;
+					} else {
+						return null;
 					}
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
-	public JSONObject getRack() {
+	public JSONObject getRack() throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (Statement stmt = c.createStatement()) {				
@@ -2107,19 +2212,15 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					return rackData;
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
-	public JSONObject getRack(int id) {
+	public JSONObject getRack(int id) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
@@ -2136,18 +2237,16 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 							.put("x", rs.getInt(2))
 							.put("y", rs.getInt(3))
 							.put("unit", rs.getInt(4));
+					} else {
+						return null;
 					}
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
@@ -2172,35 +2271,36 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 	}
 	
 	@Override
-	public JSONObject getSetting() {
+	public Path getRoot() {
+		return this.root;
+	}
+	
+	@Override
+	public JSONObject getSetting() throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
-			try (Statement stmt = c.createStatement()) {
-				JSONObject settingData = new JSONObject();
-				
+			try (Statement stmt = c.createStatement()) {				
 				try (ResultSet rs = stmt.executeQuery("SELECT"+
 					" key, value"+
 					" FROM t_setting;")) {
+					JSONObject settingData = new JSONObject();
+					
 					while (rs.next()) {
 						settingData.put(rs.getString(1), rs.getString(2));
 					}
+					
+					return settingData;
 				}
-				
-				return settingData;
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
-	public JSONObject getSetting(String key) {
+	public JSONObject getSetting(String key) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
@@ -2212,18 +2312,16 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				try (ResultSet rs = pstmt.executeQuery()) {
 					if (rs.next()) {
 						return new JSONObject().put(key, rs.getString(1));
+					} else {
+						return null;
 					}
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
@@ -2243,7 +2341,11 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				top.put(String.format("%s_RATE", parser.toString()), ja);
 				
 				result.forEach(max ->
-					ja.put(new JSONObject().put("id", max.id).put("index", max.index).put("value", max.value).put("rate", max.rate)));
+					ja.put(new JSONObject()
+						.put("id", max.id)
+						.put("index", max.index)
+						.put("value", max.value)
+						.put("rate", max.rate)));
 			}
 			
 			result = parser.getTop(count, false);
@@ -2254,7 +2356,11 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				top.put(parser.toString(), ja);
 				
 				result.forEach(max ->
-					ja.put(new JSONObject().put("id", max.id).put("index", max.index).put("value", max.value).put("rate", max.rate)));
+					ja.put(new JSONObject()
+						.put("id", max.id)
+						.put("index", max.index)
+						.put("value", max.value)
+						.put("rate", max.rate)));
 			}
 		}
 		
@@ -2268,64 +2374,101 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 	}
 
 	@Override
-	public JSONObject getUser() {
+	public JSONObject getUser(boolean event) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (Statement stmt = c.createStatement()) {
-				JSONObject userData = new JSONObject();
-				
-				try (ResultSet rs = stmt.executeQuery("SELECT"+
-					" name, email, sms"+
-					" FROM t_user;")) {
+				String query = String.format("SELECT"+
+						" id, name, email, sms, event"+
+						" FROM t_user WHERE %s;", event? "sms IS NOT NULL OR email IS NOT NULL": "TRUE");				
+				try (ResultSet rs = stmt.executeQuery(query)) {
+					JSONObject userData = new JSONObject();
+					JSONObject user;
+					String value;
+					
 					while (rs.next()) {
-						userData.put(rs.getString(1), new JSONObject()
-							.put("name", rs.getString(1))
-							.put("email", rs.getString(2))
-							.put("sms", rs.getString(3)));
+						user = new JSONObject();
+						
+						value = rs.getString(1);
+						
+						user.put("id", value);
+						
+						userData.put(value, user);
+						
+						value = rs.getString(2);
+						
+						if (!rs.wasNull()) {
+							user.put("name", value);
+						}
+						
+						value = rs.getString(3);
+						
+						if (!rs.wasNull()) {
+							user.put("email", value);
+						}
+						
+						value = rs.getString(4);
+						
+						if (!rs.wasNull()) {
+							user.put("sms", value);
+						}
+						
+						user.put("event", rs.getBoolean(5));
 					}
+					
+					return userData;
 				}
-				
-				return userData;
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 
 	@Override
-	public JSONObject getUser(String name) {
+	public JSONObject getUser(String id) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
-				" name, email, sms"+
+				" name, email, sms, event"+
 				" FROM t_user"+
-				" WHERE name=?;")) {
-				pstmt.setString(1, name);
+				" WHERE id=?;")) {
+				pstmt.setString(1, id);
 				
 				try (ResultSet rs = pstmt.executeQuery()) {
 					if (rs.next()) {
-						return new JSONObject()
-							.put("name", rs.getString(1))
-							.put("email", rs.getString(2))
-							.put("sms", rs.getString(3));
+						JSONObject user = new JSONObject();
+						String value;
+						
+						user.put("id", id);
+						user.put("name", rs.getString(1));
+						
+						value = rs.getString(2);
+						
+						if (!rs.wasNull()) {
+							user.put("email", value);
+						}
+						
+						value = rs.getString(3);
+						
+						if (!rs.wasNull()) {
+							user.put("sms", value);
+						}
+						
+						user.put("event", rs.getBoolean(4));
+						
+						return user;
+					} else {
+						return null;
 					}
 				}
 			}
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return null;
 	}
 	
 	@Override
@@ -2658,18 +2801,15 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				}	
 				
 				try (PreparedStatement pstmt = c.prepareStatement("SELECT"+
-					" port, version, security, COALESCE(level, 0)"+
+					" port, version, security, level"+
 					" FROM t_profile"+
 					" WHERE name=?;")) {
 					pstmt.setString(1, profile);
 					
 					try (ResultSet rs = pstmt.executeQuery()) {
 						if (rs.next()) {
-							this.nodeManager.createSNMPNode(id, ip,
-								rs.getInt(1),
-								rs.getString(2),
-								rs.getString(3),
-								rs.getInt(4));
+							this.nodeManager.createNode(id,
+								SNMPNode.getInstance(this.nodeManager, id, ip, rs.getInt(1), rs.getString(3), rs.getInt(2), rs.getInt(4)));
 						}
 					}			
 				}
@@ -2704,11 +2844,10 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					" (id, protocol)"+
 					" VALUES (?, 'icmp');")) {
 					pstmt.setLong(1, id);
-					//pstmt.setString(2, ip);
 					
 					pstmt.executeUpdate();
 					
-					this.nodeManager.createSimpleNode(id, ip, "icmp");
+					this.nodeManager.createNode(id, new ICMPNode(id, ip));
 				}
 				
 				c.commit();
@@ -2745,7 +2884,7 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					pstmt.executeUpdate();
 				}
 				
-				this.nodeManager.createSimpleNode(id, ip, "tcp");
+				this.nodeManager.createNode(id, new TCPNode(id, ip));
 				
 				c.commit();
 				
@@ -2812,6 +2951,57 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 		}
 		
 		return false;
+	}
+	
+	@Override
+	public boolean removeFacility(long id) throws SQLException {
+		long ttt = System.currentTimeMillis();
+		try (Connection c = this.connPool.getConnection()) {
+			c.setAutoCommit(false);
+			
+			try {
+				try (Statement stmt = c.createStatement()) {
+					try (ResultSet rs = stmt.executeQuery("SELECT"+
+						" position"+
+						" FROM t_position"+
+						" WHERE name='facility';")) {
+						if (rs.next()) {
+							JSONObject position = new JSONObject(rs.getString(1));
+							
+							position.remove(Long.toString(id));
+							
+							try (PreparedStatement pstmt = c.prepareStatement("UPDATE t_position"+
+								" SET position=?"+
+								" WHERE name='facility';")) {
+								pstmt.setString(1, position.toString());
+								
+								pstmt.executeUpdate();
+							}
+						}
+					}
+				}
+			
+				try (PreparedStatement pstmt = c.prepareStatement("DELETE"+
+					" FROM t_facility"+
+					" WHERE id=?;")) {
+					pstmt.setLong(1, id);
+					
+					pstmt.executeUpdate();
+				}
+				
+				c.commit();
+				
+				return true;
+			} catch (SQLException sqle) {
+				c.rollback();
+				
+				throw sqle;
+			}
+		} finally {
+			if (System.currentTimeMillis() - ttt > 30000) {
+				new Exception().printStackTrace();
+			}
+		}
 	}
 	
 	@Override
@@ -3075,13 +3265,13 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 	}
 	
 	@Override
-	public boolean removeUser(String name) {
+	public boolean removeUser(String id) {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("DELETE"+
 				" FROM t_user"+
-				" WHERE name=?;")) {
-				pstmt.setString(1, name);
+				" WHERE id=?;")) {
+				pstmt.setString(1, id);
 				
 				pstmt.executeUpdate();
 			}
@@ -3099,7 +3289,7 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 	}
 	
 	@Override
-	public boolean search(String network, int mask, String name) {
+	public boolean search(String network, int mask, String name) throws SQLException {
 		try {
 			JSONObject profileList = getProfile(), profile;
 			Profile	args [] = new Profile[profileList.length()];
@@ -3113,14 +3303,14 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					args[i++] = profile.has("level")?
 						new Profile(
 							profile.getString("name"),
-							profile.getString("version"),
 							profile.getInt("port"),
+							profile.getInt("version"),
 							profile.getString("security"),
 							profile.getInt("level")):
 						new Profile(
 							profile.getString("name"),
-							profile.getString("version"),
 							profile.getInt("port"),
+							profile.getInt("version"),
 							profile.getString("security"));
 				}
 				
@@ -3131,14 +3321,14 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				search = new SmartSearch(this.nodeManager, new Network(network, mask), profile.has("level")?
 					new Profile(
 						profile.getString("name"),
-						profile.getString("version"),
 						profile.getInt("port"),
+						profile.getInt("version"),
 						profile.getString("security"),
 						profile.getInt("level")):
 					new Profile(
 						profile.getString("name"),
-						profile.getString("version"),
 						profile.getInt("port"),
+						profile.getInt("version"),
 						profile.getString("security")));
 			}
 			
@@ -3286,6 +3476,38 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 		
 		return false;
 	}
+	
+	@Override
+	public boolean setFacility(long id, JSONObject facility) throws SQLException {
+		long ttt = System.currentTimeMillis();
+		try (Connection c = this.connPool.getConnection()) {
+			try (PreparedStatement pstmt = c.prepareStatement("UPDATE t_facility"+
+				" SET"+
+				" name=?,"+
+				" width=?,"+
+				" height=?,"+
+				" depth=?,"+
+				" rotate=?,"+
+				" image=?"+
+				" WHERE id=?;")) {
+				pstmt.setString(1, facility.getString("name"));
+				pstmt.setInt(2, facility.getInt("width"));
+				pstmt.setInt(3, facility.getInt("height"));
+				pstmt.setInt(4, facility.getInt("depth"));
+				pstmt.setInt(5, facility.getInt("rotate"));
+				pstmt.setString(6, facility.getString("image"));
+				pstmt.setLong(7, id);
+				
+				pstmt.executeUpdate();
+			}
+			
+			return true;
+		}finally {
+			if (System.currentTimeMillis() - ttt > 30000) {
+				new Exception().printStackTrace();
+			}
+		}
+	}
 
 	@Override
 	public boolean setLimit(long id, String oid, String index, int limit) {
@@ -3312,7 +3534,7 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 					pstmt.setString(2, oid);
 					pstmt.setString(3, index);
 					
-					System.out.println(pstmt.executeUpdate());
+					pstmt.executeUpdate();
 				}
 			}
 			
@@ -3426,16 +3648,16 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 	}
 
 	@Override
-	public boolean setLocation(long node, JSONObject location) {
+	public boolean setLocation(long node, JSONObject location) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("MERGE INTO t_location"+
-				" (node, maker, name, rack, position)"+
+				" (node, maker, model, rack, position)"+
 				" KEY(node)"+
 				" VALUES(?, ?, ?, ?, ?);")) {
 				pstmt.setLong(1, node);
 				pstmt.setString(2, location.getString("maker"));
-				pstmt.setString(3, location.getString("name"));
+				pstmt.setString(3, location.getString("model"));
 				pstmt.setInt(4, location.getInt("rack"));
 				pstmt.setInt(5, location.getInt("position"));
 				
@@ -3443,8 +3665,53 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 			}
 			
 			return true;
+		} finally {
+			if (System.currentTimeMillis() - ttt > 30000) {
+				new Exception().printStackTrace();
+			}
+		}
+	}
+	
+	@Override
+	public boolean setManager(long node, String user) {
+		long ttt = System.currentTimeMillis();
+		try (Connection c = this.connPool.getConnection()) {
+			try {
+				c.setAutoCommit(false);
+			
+				try (PreparedStatement pstmt = c.prepareStatement("UPDATE"+
+					" t_node"+
+					" SET manager=?"+
+					" WHERE id=?"+
+					";")) {
+					pstmt.setString(1, user);
+					pstmt.setLong(2, node);
+					
+					pstmt.executeUpdate();
+				}
+				
+				try (PreparedStatement pstmt = c.prepareStatement("INSERT INTO"+
+					" t_manager"+
+					" (node, user, timestamp)"+
+					" VALUES(?, ?, ?)"+
+					";")) {
+					pstmt.setLong(1, node);
+					pstmt.setString(2, user);
+					pstmt.setLong(3, System.currentTimeMillis());
+					
+					pstmt.executeUpdate();
+				}
+				
+				c.commit();
+				
+				return true;
+			} catch (SQLException sqle) {
+				c.rollback();
+				
+				throw sqle;
+			}
 		} catch (SQLException sqle) {
-			sqle.printStackTrace();
+				sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
@@ -3455,7 +3722,7 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 	}
 	
 	@Override
-	public boolean setMonitor(long id, String ip, String protocol) {
+	public boolean setMonitor(long id, String ip, String protocol) throws SQLException {
 		if (protocol == null) {
 			long ttt = System.currentTimeMillis();
 			try (Connection c = this.connPool.getConnection()) {
@@ -3484,15 +3751,15 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 			
 			switch (protocol.toUpperCase()) {
 			case "SNMP":
-				Arguments args [] = new Arguments [profileData.length()];
+				Profile args [] = new Profile [profileData.length()];
 				int i = 0;
 				
 				for (Object key : profileData.keySet()) {
 					profile = profileData.getJSONObject((String)key);
 					
-					args[i++] = new Arguments(profile.getString("name"),
+					args[i++] = new Profile(profile.getString("name"),
 						profile.getInt("port"),
-						profile.getString("version"),
+						profile.getInt("version"),
 						profile.getString("security"),
 						profile.has("level")? profile.getInt("level"): 0);
 				}
@@ -3508,14 +3775,15 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 			default:
 				profile = profileData.getJSONObject(protocol);
 				
-				this.nodeManager.testNode(id, ip, protocol, new Arguments(profile.getString("name"),
-					profile.getInt("port"),
-					profile.getString("version"),
-					profile.getString("security"),
-					profile.has("level")? profile.getInt("level"): 0));
+				this.nodeManager.testNode(id, ip, protocol,
+					new Profile(profile.getString("name"),
+						profile.getInt("port"),
+						profile.getInt("version"),
+						profile.getString("security"),
+						profile.has("level")? profile.getInt("level"): 0));
 			}
 		}
-			
+		
 		return true;
 	}
 
@@ -3647,7 +3915,7 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 	}
 
 	@Override
-	public boolean setPosition(String name, JSONObject position) {
+	public void setPosition(String name, JSONObject position) throws SQLException {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("MERGE INTO t_position"+
@@ -3659,31 +3927,22 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				
 				pstmt.executeUpdate();
 			}
-			
-			return true;
-		} catch (SQLException sqle) {
-			sqle.printStackTrace();
 		} finally {
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
 		}
-		
-		return false;
 	}
 	
 	@Override
 	public boolean setRack(int id, JSONObject rack) {
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
-			try (PreparedStatement pstmt = c.prepareStatement("UPDATE t_rack"+
-				" SET name=?, x=?, y=?, unit=?"+
+			try (PreparedStatement pstmt = c.prepareStatement("UPDATE t_facility"+
+				" SET unit=?"+
 				" WHERE id=?;")) {
-				pstmt.setString(1, rack.getString("name"));
-				pstmt.setInt(2, rack.getInt("x"));
-				pstmt.setInt(3, rack.getInt("y"));
-				pstmt.setInt(4, rack.getInt("unit"));
-				pstmt.setInt(5, id);
+				pstmt.setInt(1, rack.getInt("unit"));
+				pstmt.setInt(2, id);
 				
 				pstmt.executeUpdate();
 			}
@@ -4038,21 +4297,26 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 		long ttt = System.currentTimeMillis();
 		try (Connection c = this.connPool.getConnection()) {
 			try (PreparedStatement pstmt = c.prepareStatement("UPDATE t_user"+
-				" SET email=?, sms=?"+
-				" WHERE name=?;")) {
-				if (user.has("email")) {
-					pstmt.setString(1, user.getString("email"));	
-				} else {
-					pstmt.setNull(1, Types.NULL);
-				}
+				" SET name=?, email=?, sms=?, event=?"+
+				" WHERE id=?;")) {
 				
-				if (user.has("sms")) {
-					pstmt.setString(2, user.getString("sms"));	
+				pstmt.setString(1, user.getString("name"));	
+				
+				if (user.has("email")) {
+					pstmt.setString(2, user.getString("email"));	
 				} else {
 					pstmt.setNull(2, Types.NULL);
 				}
 				
-				pstmt.setString(3, user.getString("name"));
+				if (user.has("sms")) {
+					pstmt.setString(3, user.getString("sms"));	
+				} else {
+					pstmt.setNull(3, Types.NULL);
+				}
+				
+				pstmt.setBoolean(4, user.getBoolean("event"));
+				
+				pstmt.setString(5, id);
 				
 				pstmt.executeUpdate();
 			}
@@ -4077,7 +4341,7 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 				try (ResultSet rs = stmt.executeQuery("SELECT"+
 					" security, level, auth_protocol, auth_key, priv_protocol, priv_key"+
 					" FROM t_profile"+
-					" WHERE version='v3';")) {
+					" WHERE version=3;")) {
 					while (rs.next()) {
 						this.nodeManager.addUSMUser(rs.getString(1), rs.getInt(2), rs.getString(3), rs.getString(4), rs.getString(5), rs.getString(6));	
 					}
@@ -4109,21 +4373,23 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 						try {
 							switch(rs.getString(3).toUpperCase()) {
 							case "ICMP":
+								this.nodeManager.createNode(id,
+									new ICMPNode(id, rs.getString(2)),
+									rs.getBoolean(8));
+								
+								break;
 							case "TCP":
-								this.nodeManager.createSimpleNode(
-									id,
-									rs.getString(2),
-									rs.getString(3));
+								this.nodeManager.createNode(id,
+									new TCPNode(id, rs.getString(2)),
+									rs.getBoolean(8));
 								
 								break;
 							case "SNMP":
-								this.nodeManager.createSNMPNode(
-									id,
-									rs.getString(2),
-									rs.getInt(4),
-									rs.getString(5),
-									rs.getString(6),
-									rs.getInt(7));
+								this.nodeManager.createNode(id,
+									SNMPNode.getInstance(this.nodeManager, id, rs.getString(2), rs.getInt(4), rs.getString(6), rs.getInt(5), rs.getInt(7)),
+									rs.getBoolean(8));
+								
+								break;
 							}
 						} catch (IOException ioe) {
 							ioe.printStackTrace();
@@ -4139,6 +4405,68 @@ public class H2Agent implements Commander, NodeEventReceivable, Listener, Closea
 			if (System.currentTimeMillis() - ttt > 30000) {
 				new Exception().printStackTrace();
 			}
+		}
+	}
+	
+	@Override
+	public void test(Object... args) {
+		JSONObject jsono = (JSONObject)args[0];
+		JSONObject locationData = jsono.getJSONObject("location");
+		
+		try (Connection c = this.connPool.getConnection()) {
+			/*try (PreparedStatement pstmt = c.prepareStatement("insert into t_node (id, name, ip) values (?, ?, ?);")) {
+				JSONObject node;
+				
+				for (int i=1, _i=jsona.length(); i<_i; i++) {
+					node = jsona.getJSONObject(i);
+					
+					pstmt.setLong(1, i);
+					pstmt.setString(2, node.getString("name"));
+					
+					if (node.has("ip")) {
+						pstmt.setString(3, node.getString("ip"));
+					} else {
+						pstmt.setNull(3, Types.NULL);
+					}
+					
+					pstmt.executeUpdate();
+				}
+			}*/
+			/*
+			try (PreparedStatement pstmt = c.prepareStatement("insert into t_facility"+
+					" (id, name, type, unit, width, height, depth)"+
+					" values (?, ?, 'rack', 42, 600, 2100, 900);")) {
+				for (int i=4; i<13; i++) {
+					pstmt.setLong(1, i);
+					pstmt.setString(2, String.format("Rack%d", i));
+					
+					pstmt.executeUpdate();
+				}
+			}
+			*/
+			try (PreparedStatement pstmt = c.prepareStatement("delete from t_location;")) {
+				pstmt.executeUpdate();
+			}
+			
+			try (PreparedStatement pstmt = c.prepareStatement("insert into t_location"+
+				" (node, maker, model, rack, position)"+
+				" values (?, ?, ?, ?, ?);")) {
+				JSONObject location;
+				
+				for (Object key : locationData.keySet()) {
+					location = locationData.getJSONObject((String)key);
+					
+					pstmt.setLong(1, Long.valueOf((String)key));
+					pstmt.setString(2, location.getString("maker"));
+					pstmt.setString(3, location.getString("model"));
+					pstmt.setInt(4, location.getInt("rack"));
+					pstmt.setInt(5, location.getInt("position"));
+					
+					pstmt.executeUpdate();
+				}
+			}
+		} catch (SQLException sqle) {
+			sqle.printStackTrace();
 		}
 	}
 }

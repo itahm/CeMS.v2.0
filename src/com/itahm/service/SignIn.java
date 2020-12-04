@@ -7,9 +7,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
+import javax.servlet.http.HttpServletResponse;
+
 import org.h2.jdbcx.JdbcConnectionPool;
 
-import com.itahm.http.Request;
+import com.itahm.http.Reques;
 import com.itahm.http.Response;
 import com.itahm.http.Session;
 import com.itahm.json.JSONObject;
@@ -20,8 +22,6 @@ public class SignIn implements Serviceable {
 	private final static int SESS_TIMEOUT = 3600;
 	
 	private final JdbcConnectionPool connPool;
-	
-	private Boolean isClosed = true;
 	
 	public SignIn(Path root) throws Exception {
 		connPool = JdbcConnectionPool.create(String.format("jdbc:h2:%s", root.resolve("account").toString()), "sa", "");
@@ -65,35 +65,11 @@ public class SignIn implements Serviceable {
 	}
 	
 	@Override
-	public void start() {
-		synchronized(this.isClosed) {
-			if (!this.isClosed) {
-				return;
-			}
-			
-			this.isClosed = false;
-		}
-	}
-	
-	@Override
-	public void stop() {
-		synchronized(this.isClosed) {
-			if (this.isClosed) {
-				return;
-			}
-			
-			this.isClosed = true;
-		}
+	public void close() {
 	}
 
 	@Override
-	synchronized public boolean service(Request request, Response response, JSONObject data) {
-		synchronized(this.isClosed) {
-			if (this.isClosed) {
-				return false;
-			}
-		}
-		
+	synchronized public boolean service(Reques request, Response response, JSONObject data) {
 		Session session = request.getSession(false);
 		
 		if (session == null) {
@@ -104,17 +80,19 @@ public class SignIn implements Serviceable {
 						pstmt.setString(1, data.getString("username"));
 						pstmt.setString(2, data.getString("password"));
 						
-						try (ResultSet rs = pstmt.executeQuery()) {							
+						try (ResultSet rs = pstmt.executeQuery()) {
 							if (rs.next()) {
 								JSONObject account = new JSONObject()
 									.put("username", rs.getString(1))
 									.put("level", rs.getInt(2));
 								
-								session = request.getSession();
+								session = request.getSession(true);
 								
 								session.setAttribute("account", account);
 								
 								session.setMaxInactiveInterval(SESS_TIMEOUT);
+								
+								response.setHeader("Set-Session", session.id);
 								
 								response.write(account.toString());
 								
@@ -125,11 +103,13 @@ public class SignIn implements Serviceable {
 				} catch (SQLException sqle) {
 					sqle.printStackTrace();
 					
-					response.setStatus(Response.Status.SERVERERROR);
+					response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+					
+					return true;
 				}
 			}
 				
-			response.setStatus(Response.Status.UNAUTHORIZED);
+			response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
 			
 			return true;
 		}
@@ -146,7 +126,7 @@ public class SignIn implements Serviceable {
 		case "ADD":
 			if(data.getString("target").equalsIgnoreCase("ACCOUNT")) {
 				if (!addAccount(data.getString("username"), data.getJSONObject("account"))) {
-					response.setStatus(Response.Status.CONFLICT);
+					response.setStatus(HttpServletResponse.SC_CONFLICT);
 				}
 				
 				return true;
@@ -160,7 +140,7 @@ public class SignIn implements Serviceable {
 					getAccount();
 					
 				if (account == null) {
-					response.setStatus(Response.Status.NOCONTENT);
+					response.setStatus(HttpServletResponse.SC_NO_CONTENT);
 				} else {
 					response.write(account.toString());
 				}
@@ -172,7 +152,7 @@ public class SignIn implements Serviceable {
 		case "REMOVE":
 			if(data.getString("target").equalsIgnoreCase("ACCOUNT")) {
 				if(!removeAccount(data.getString("username"))) {
-					response.setStatus(Response.Status.CONFLICT);
+					response.setStatus(HttpServletResponse.SC_CONFLICT);
 				}
 				
 				return true;
@@ -182,7 +162,7 @@ public class SignIn implements Serviceable {
 		case "SET":
 			if(data.getString("target").equalsIgnoreCase("ACCOUNT")) {
 				if (!setAccount(data.getString("username"), data.getJSONObject("account"))) {
-					response.setStatus(Response.Status.CONFLICT);
+					response.setStatus(HttpServletResponse.SC_CONFLICT);
 				}
 				
 				return true;
@@ -255,13 +235,6 @@ public class SignIn implements Serviceable {
 		}
 		
 		return null;
-	}
-	
-	@Override
-	public boolean isRunning() {
-		synchronized(this.isClosed) {
-			return !this.isClosed;
-		}
 	}
 	
 	public boolean removeAccount(String username) {

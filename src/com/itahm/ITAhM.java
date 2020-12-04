@@ -9,9 +9,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+import javax.servlet.http.HttpServletResponse;
+
 import com.itahm.http.HTTPServer;
-import com.itahm.http.Request;
-import com.itahm.http.Response;
+import com.itahm.http.HTTPResponse;
+import com.itahm.http.HTTPRequest;
 import com.itahm.json.JSONException;
 import com.itahm.json.JSONObject;
 import com.itahm.service.NMS;
@@ -29,6 +31,14 @@ public class ITAhM extends HTTPServer {
 	
 	public ITAhM() throws Exception {
 		this("0.0.0.0", 2014);
+	}
+	
+	public ITAhM(int tcp) throws Exception {
+		this("0.0.0.0", tcp);
+	}
+	
+	public ITAhM(int tcp, Path path) throws Exception {
+		this("0.0.0.0", tcp, path);
 	}
 	
 	public ITAhM(String ip, int tcp) throws Exception {
@@ -54,14 +64,10 @@ public class ITAhM extends HTTPServer {
 		
 		services.put("SIGNIN", new SignIn(root));
 		services.put("NMS", new NMS(root));
-		
-		for (String name : this.services.keySet()) {
-			this.services.get(name).start();
-		}
 	}
 	
 	@Override
-	public void doGet(Request request, Response response) {
+	public void doGet(HTTPRequest request, HTTPResponse response) {
 		String uri = request.getRequestURI();
 		
 		if ("/".equals(uri)) {
@@ -74,22 +80,22 @@ public class ITAhM extends HTTPServer {
 			try {
 				response.write(path);
 			} catch (IOException e) {
-				response.setStatus(Response.Status.SERVERERROR);
+				response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
 			}
 		}
 		else {
-			response.setStatus(Response.Status.NOTFOUND);
+			response.setStatus(HttpServletResponse.SC_NOT_FOUND);
 		}
 	}
 	
 	@Override
-	public void doPost(Request request, Response response) {
-		if (NMS.EXPIRE > 0 && System.currentTimeMillis() > NMS.EXPIRE) {
+	public void doPost(HTTPRequest request, HTTPResponse response) {
+		/*if (NMS.EXPIRE > 0 && (System.currentTimeMillis() > NMS.EXPIRE)) {
 			response.setStatus(Response.Status.UNAVAILABLE);
 			
 			return;
 		}
-		
+		*/
 		try {
 			JSONObject data = new JSONObject(new String(request.read(), StandardCharsets.UTF_8.name()));
 			
@@ -98,51 +104,86 @@ public class ITAhM extends HTTPServer {
 			}
 			
 			Serviceable service;
+			String name;
 			
 			switch (data.getString("command").toUpperCase()) {
 			case "SERVICE":
 				JSONObject body = new JSONObject();
 				
-				for (String name : this.services.keySet()) {
-					service = this.services.get(name);
+				for (String key : this.services.keySet()) {
+					service = this.services.get(key);
 			
-					if (!name.equals("SIGNIN")) {
-						body.put(name.toLowerCase(), service.isRunning());
+					if (!key.equals("SIGNIN")) {
+						body.put(key.toLowerCase(), service == null? false: true);
 					}
 				}
 				
 				response.write(body.toString());
 				
 				return;
-			case "START":				
-				service = this.services.get(data.getString("service").toUpperCase());
+			case "START":
+				name = data.getString("service").toUpperCase();
 				
-				if (service == null) {
-					// TODO
+				if (this.services.containsKey(name)) {
+					service = this.services.get(name);
+					
+					if (service == null) {
+						switch (name) {
+						case "NMS":
+							try {
+								service = new NMS(this.root.resolve("data"));
+								
+								this.services.put(name, service);
+							} catch (Exception e) {
+								e.printStackTrace();
+								
+								response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+								
+								return;
+							}
+							
+							break;
+						default :
+							throw new JSONException("Service is reserved");
+						}
+					} else {
+						throw new JSONException("Service is running");
+					}
 				} else {
-					service.start();
+					throw new JSONException("Service is not found");
 				}
 				
 				return;
 			case "STOP":
-				service = this.services.get(data.getString("service").toUpperCase());
-				
-				if (service == null) {
-					// TODO
+				name = data.getString("service").toUpperCase();
+				if (this.services.containsKey(name)) {
+					service = this.services.get(name);
+					
+					if (service == null) {
+						throw new JSONException("Service is not running");
+					} else {
+						try {
+							service.close();
+							
+							this.services.put(name, null);
+						} catch (IOException ioe) {
+							ioe.printStackTrace();
+						}
+					}
 				} else {
-					service.stop();
+					throw new JSONException("Service is not found");
 				}
 				
 				return;
 				
 			default:
-				for (String name : this.services.keySet()) {
-					if (this.services.get(name).service(request, response, data)) {
+				for (String key : this.services.keySet()) {
+					if (this.services.get(key).service(request, response, data)) {
 						return;
 					}
 				}
 				
-				response.setStatus(Response.Status.NOTFOUND);
+				response.setStatus(HttpServletResponse.SC_NOT_FOUND);
 				
 				return;
 			}
@@ -152,7 +193,7 @@ public class ITAhM extends HTTPServer {
 				.toString());
 		}
 		
-		response.setStatus(Response.Status.BADREQUEST);
+		response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
 	}
 	
 	public void close() {
@@ -165,7 +206,11 @@ public class ITAhM extends HTTPServer {
 		}
 		
 		for (String name : this.services.keySet()) {
-			this.services.get(name).stop();
+			try {
+				this.services.get(name).close();
+			} catch (IOException ioe) {
+				ioe.printStackTrace();
+			}
 		}
 		
 		try {

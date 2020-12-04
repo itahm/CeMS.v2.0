@@ -2,13 +2,15 @@ package com.itahm.http;
 
 import java.io.IOException;
 
+import javax.servlet.http.HttpServletResponse;
+
 import com.itahm.http.Connection.Header;
 
 public class HTTPProcessor extends Thread {
 	
 	private final HTTPServer server;
 	private final Connection connection;
-	private final Request request;
+	private final HTTPRequest request;
 	
 	public HTTPProcessor(HTTPServer server, Connection connection) {
 		this.server = server;
@@ -24,7 +26,7 @@ public class HTTPProcessor extends Thread {
 	
 	@Override
 	public void run() {
-		Response response = new Response();
+		HTTPResponse response = new HTTPResponse();
 		String origin = request.getHeader(Header.ORIGIN.toString());
 		
 		switch(this.request.getMethod().toUpperCase()) {
@@ -60,7 +62,7 @@ public class HTTPProcessor extends Thread {
 			
 			break;
 		default:
-			response.setStatus(Response.Status.NOTALLOWED);
+			response.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
 			response.setHeader("Allow", "GET POST OPTIONS");
 		}
 		

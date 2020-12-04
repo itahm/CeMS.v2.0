@@ -1,6 +1,7 @@
 package com.itahm.nms.node;
 
 import java.io.IOException;
+import java.net.InetAddress;
 /*import java.util.ArrayList;*/
 import java.util.HashMap;
 import java.util.HashSet;
@@ -9,20 +10,24 @@ import java.util.Map;
 import java.util.Set;
 import java.util.Vector;
 
+import org.snmp4j.CommunityTarget;
 import org.snmp4j.PDU;
+import org.snmp4j.ScopedPDU;
 import org.snmp4j.Snmp;
 import org.snmp4j.Target;
+import org.snmp4j.UserTarget;
 import org.snmp4j.event.ResponseEvent;
 import org.snmp4j.mp.SnmpConstants;
 import org.snmp4j.smi.Null;
 import org.snmp4j.smi.OID;
+import org.snmp4j.smi.OctetString;
 import org.snmp4j.smi.UdpAddress;
 import org.snmp4j.smi.Variable;
 import org.snmp4j.smi.VariableBinding;
 
 import com.itahm.nms.node.PDUManager;
 
-abstract public class SNMPNode extends ICMPNode {
+public class SNMPNode extends ICMPNode {
 
 	private final static long TIMEOUT = 5000L;
 	private final static int RETRY = 2;
@@ -32,14 +37,34 @@ abstract public class SNMPNode extends ICMPNode {
 	private final Map<OID, OID> reqMap = new HashMap<>();
 	private Integer code;
 	
-	public SNMPNode(Snmp snmp, long id, String ip, Target<UdpAddress> target) throws IOException {
+	private SNMPNode(Snmp snmp, long id, String ip, Target<UdpAddress> target) throws IOException {
 		super(id, ip, String.format("SNMPNode %s", ip));
-
+		
 		this.snmp = snmp;
 		this.target = target;
+	}
 		
-		target.setTimeout(TIMEOUT);
-		target.setRetries(RETRY);
+	public static SNMPNode getInstance(Snmp snmp, long id, String ip, int udp, String security, int version, int level) throws IOException {
+		Target<UdpAddress> target;
+		
+		switch(version) {
+		case SnmpConstants.version3:
+			target = new UserTarget<UdpAddress>(new UdpAddress(InetAddress.getByName(ip), udp), new OctetString(security), new byte [0], level);
+			
+			target.setVersion(version);
+			target.setTimeout(TIMEOUT);
+			target.setRetries(RETRY);
+			
+			return new SNMPNode.SNMPV3Node(snmp, id, ip, target);
+		default:
+			target = new CommunityTarget<>(new UdpAddress(InetAddress.getByName(ip), udp), new OctetString(security));
+			
+			target.setVersion(version);
+			target.setTimeout(TIMEOUT);
+			target.setRetries(RETRY);
+			
+			return new SNMPNode(snmp, id, ip, target);
+		}	
 	}
 	
 	@Override
@@ -167,5 +192,26 @@ abstract public class SNMPNode extends ICMPNode {
 		return repeat(this.snmp.send(nextPDU, this.target));
 	}
 	
-	abstract protected PDU createPDU();
+	protected PDU createPDU() {
+		PDU pdu = new PDU();
+		
+		pdu.setType(PDU.GETNEXT);
+		
+		return pdu;
+	}
+	
+	public static class SNMPV3Node extends SNMPNode {
+		private SNMPV3Node(Snmp snmp, long id, String ip, Target<UdpAddress> target) throws IOException {
+			super(snmp, id, ip, target);
+		}
+		
+		@Override
+		public PDU createPDU() {
+			PDU pdu = new ScopedPDU();
+			
+			pdu.setType(PDU.GETNEXT);
+			
+			return pdu;
+		}
+	}
 }

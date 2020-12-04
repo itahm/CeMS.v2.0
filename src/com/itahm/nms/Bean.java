@@ -276,4 +276,25 @@ public class Bean {
 			return config;
 		}
 	}
+	
+	public static class Profile {
+		public final String name;
+		public final int version;
+		public final String security;
+		public final int port;
+		public final int level;
+		
+		public Profile (String name, int port, int version, String security) {
+			this(name, version, port, security, 0);
+			
+		}
+		
+		public Profile (String name, int port, int version, String security, int level) {
+			this.name = name;
+			this.version = version;
+			this.port = port;
+			this.security = security;
+			this.level = level;
+		}
+	}
 }

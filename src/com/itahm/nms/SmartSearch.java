@@ -21,6 +21,7 @@ import org.snmp4j.smi.OctetString;
 import org.snmp4j.smi.UdpAddress;
 import org.snmp4j.smi.VariableBinding;
 
+import com.itahm.nms.Bean.Profile;
 import com.itahm.util.Listener;
 import com.itahm.util.Network;
 
@@ -67,8 +68,8 @@ public class SmartSearch implements Runnable, ResponseListener {
 		for (Profile profile: this.profile) {
 			name = profile.name;
 			
-			switch(profile.version.toLowerCase()) {
-			case "v3":
+			switch(profile.version) {
+			case 3:
 				target = new UserTarget<>();
 				
 				target.setSecurityName(new OctetString(profile.security));
@@ -79,7 +80,7 @@ public class SmartSearch implements Runnable, ResponseListener {
 				version = SnmpConstants.version3;
 				
 				break;
-			case "v2c":
+			case 1:
 				target = new CommunityTarget<>();
 					
 				((CommunityTarget<UdpAddress>)target).setCommunity(new OctetString(profile.security));
@@ -156,27 +157,6 @@ public class SmartSearch implements Runnable, ResponseListener {
 		} catch (IOException ioe) {
 			ioe.printStackTrace();
 		}		
-	}
-	
-	public static class Profile {
-		private final String name;
-		private final String version;
-		private final String security;
-		private final int port;
-		private final int level;
-		
-		public Profile (String name, String version, int port, String community) {
-			this(name, version, port, community, 0);
-			
-		}
-		
-		public Profile (String name, String version, int port, String security, int level) {
-			this.name = name;
-			this.version = version;
-			this.port = port;
-			this.security = security;
-			this.level = level;
-		}
 	}
 	
 	private class Args {

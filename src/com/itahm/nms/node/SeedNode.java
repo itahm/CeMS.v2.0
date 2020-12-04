@@ -20,6 +20,7 @@ import org.snmp4j.smi.OctetString;
 import org.snmp4j.smi.UdpAddress;
 import org.snmp4j.smi.VariableBinding;
 
+import com.itahm.nms.Bean.Profile;
 import com.itahm.util.Listenable;
 import com.itahm.util.Listener;
 
@@ -72,7 +73,7 @@ public class SeedNode implements Runnable, Listenable {
 		test(protocol, null);
 	}
 	
-	public void test(Protocol protocol, Snmp snmp, Arguments ...args) {
+	public void test(Protocol protocol, Snmp snmp, Profile ...args) {
 		switch(protocol) {
 		case ICMP:
 			this.target = new Testable() {
@@ -129,23 +130,23 @@ public class SeedNode implements Runnable, Listenable {
 					UdpAddress udp;
 					int version;
 					
-					for (Arguments argument : args) {
-						switch(argument.version.toUpperCase()) {
-						case "V3":
+					for (Profile profile: args) {
+						switch(profile.version) {
+						case 3:
 							target = new UserTarget<>();
 							
-							target.setSecurityName(new OctetString(argument.security));
-							target.setSecurityLevel(argument.level);
+							target.setSecurityName(new OctetString(profile.security));
+							target.setSecurityLevel(profile.level);
 							
 							request = new ScopedPDU();
 							
 							version = SnmpConstants.version3;
 							
 							break;
-						case "V2C":
+						case 2:
 							target = new CommunityTarget<>();
 								
-							((CommunityTarget<UdpAddress>)target).setCommunity(new OctetString(argument.security));
+							((CommunityTarget<UdpAddress>)target).setCommunity(new OctetString(profile.security));
 							
 							request = new PDU();
 							
@@ -156,7 +157,7 @@ public class SeedNode implements Runnable, Listenable {
 						default:
 							target = new CommunityTarget<>();
 							
-							((CommunityTarget<UdpAddress>)target).setCommunity(new OctetString(argument.security));
+							((CommunityTarget<UdpAddress>)target).setCommunity(new OctetString(profile.security));
 							
 							request = new PDU();
 							
@@ -171,7 +172,7 @@ public class SeedNode implements Runnable, Listenable {
 						request.add(new VariableBinding(new OID("1.3.6.1.2.1")));
 						request.setRequestID(new Integer32(0));
 						
-						udp = new UdpAddress(argument.port);
+						udp = new UdpAddress(profile.port);
 							
 						try {
 							udp.setInetAddress(InetAddress.getByName(ip));
@@ -179,7 +180,7 @@ public class SeedNode implements Runnable, Listenable {
 							target.setAddress(udp);
 							
 							if (onResponse(snmp.send(request, target))) {
-								fireEvent(protocol, argument.name);
+								fireEvent(protocol, profile.name);
 									
 								return;
 							}
@@ -227,21 +228,5 @@ public class SeedNode implements Runnable, Listenable {
 	@Override
 	public void run() {
 		this.target.test();
-	}
-
-	public static class Arguments {
-		private final int port;
-		private final String version;
-		private final int level;
-		private final String security;
-		private final String name;
-		
-		public Arguments(String name, int port, String version, String security, int level) {
-			this.name = name;
-			this.port = port;
-			this.version = version;
-			this.security = security;
-			this.level = level;
-		}
 	}
 }
