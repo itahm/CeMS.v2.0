@@ -234,7 +234,7 @@ public class SignIn implements Serviceable {
 				return true;
 			}
 			
-			if (!data.getString("target").equalsIgnoreCase("account")) {
+			if (!data.has("target") || !data.getString("target").equalsIgnoreCase("account")) {
 				return false;
 			}
 			
@@ -251,7 +251,7 @@ public class SignIn implements Serviceable {
 					executor.execute(response, data, (JSONObject)session.getAttribute("account"), c);
 				}
 			}
-		} catch (JSONException e) {
+		} catch (JSONException e) {System.out.println(e);
 			response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
 			
 			response.write(new JSONObject().
