@@ -113,7 +113,8 @@ public class Add implements Executor{
 		map.put("USER", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
 				if (!agent.addUser(request.getString("id"), request.getJSONObject("user"))) {
 					response.setStatus(HttpServletResponse.SC_CONFLICT);
 				}
@@ -135,7 +136,7 @@ public class Add implements Executor{
 			
 			try (PreparedStatement pstmt = connection.prepareStatement("INSERT INTO"+
 				" t_audit values (?, 'add', ?, ?);")) {
-				pstmt.setString(1, session.getString("username"));
+				pstmt.setString(1, session.getString("id"));
 				pstmt.setString(2, target);
 				pstmt.setLong(3, System.currentTimeMillis());
 				

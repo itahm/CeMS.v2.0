@@ -118,9 +118,14 @@ public class Remove implements Executor {
 		map.put("USER", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (!agent.removeUser(request.getString("id"))) {
-					response.setStatus(HttpServletResponse.SC_CONFLICT);
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				String id = request.getString("id");
+				
+				if (session.getInt("level") > 0 || id.equals(session.getString("id"))) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.removeUser(request.getString("id"));
 				}
 			}
 			
@@ -139,7 +144,7 @@ public class Remove implements Executor {
 			
 			try (PreparedStatement pstmt = connection.prepareStatement("INSERT INTO"+
 				" t_audit values (?, 'remove', ?, ?);")) {
-				pstmt.setString(1, session.getString("username"));
+				pstmt.setString(1, session.getString("id"));
 				pstmt.setString(2, target);
 				pstmt.setLong(3, System.currentTimeMillis());
 				

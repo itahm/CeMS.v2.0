@@ -38,7 +38,7 @@ public class Get implements Executor {
 						
 						while (rs.next()) {
 							result.put(Long.toString(rs.getLong(4)), new JSONObject()
-								.put("username", rs.getString(1))
+								.put("id", rs.getString(1))
 								.put("command", rs.getString(2))
 								.put("target", rs.getString(3))
 								.put("timestamp", rs.getLong(4)));

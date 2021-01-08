@@ -21,17 +21,18 @@ public class Set implements Executor {
 		map.put("BANDWIDTH", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (request.has("value")) {
-					if (!agent.setBandwidth(request.getLong("id"),
-						request.getString("index"),
-						request.getString("value"))) {
-						response.setStatus(HttpServletResponse.SC_CONFLICT);
-					}
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
 				} else {
-					if (!agent.removeBandwidth(request.getLong("id"),
-						request.getString("index"))) {
-						response.setStatus(HttpServletResponse.SC_CONFLICT);
+					if (request.has("value")) {
+						agent.setBandwidth(request.getLong("id"),
+							request.getString("index"),
+							request.getString("value"));
+					} else {
+						agent.removeBandwidth(request.getLong("id"),
+							request.getString("index"));
 					}
 				}
 			}
@@ -41,9 +42,12 @@ public class Set implements Executor {
 		map.put("BRANCH", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (!agent.setBranch(request.getLong("id"), request.getJSONObject("branch"))) {
-					response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setBranch(request.getLong("id"), request.getJSONObject("branch"));
 				}
 			}
 			
@@ -66,10 +70,9 @@ public class Set implements Executor {
 					map.put("RETRY", new Executor() {
 
 						@Override
-						public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-							if (!agent.setRetry(request.getInt("value"))) {
-								response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-							}
+						public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+							throws SQLException {
+							agent.setRetry(request.getInt("value"));
 						}
 						
 					});
@@ -77,10 +80,9 @@ public class Set implements Executor {
 					map.put("STOREDATE", new Executor() {
 
 						@Override
-						public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-							if (!agent.setStoreDate(Integer.valueOf(request.getString("value")))) {
-								response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-							}
+						public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+							throws SQLException {
+							agent.setStoreDate(Integer.valueOf(request.getString("value")));
 						}
 						
 					});
@@ -88,10 +90,9 @@ public class Set implements Executor {
 					map.put("SAVEINTERVAL", new Executor() {
 
 						@Override
-						public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-							if (!agent.setSaveInterval(Integer.valueOf(request.getString("value")))) {
-								response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-							}
+						public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+							throws SQLException {
+							agent.setSaveInterval(Integer.valueOf(request.getString("value")));
 						}
 						
 					});
@@ -99,10 +100,9 @@ public class Set implements Executor {
 					map.put("REQUESTINTERVAL", new Executor() {
 
 						@Override
-						public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-							if (!agent.setRequestInterval(request.getLong("value"))) {
-								response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-							}
+						public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+							throws SQLException {
+							agent.setRequestInterval(request.getLong("value"));
 						}
 						
 					});
@@ -141,10 +141,9 @@ public class Set implements Executor {
 					map.put("TIMEOUT", new Executor() {
 
 						@Override
-						public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-							if (!agent.setTimeout(request.getInt("value"))) {
-								response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-							}
+						public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+							throws SQLException {
+							agent.setTimeout(request.getInt("value"));
 						}
 						
 					});
@@ -167,7 +166,11 @@ public class Set implements Executor {
 			
 			@Override
 			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) throws SQLException {
-				this.config.execute(response, request, session, connection);
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					this.config.execute(response, request, session, connection);
+				}
 			}
 			
 		});
@@ -175,18 +178,22 @@ public class Set implements Executor {
 		map.put("FACILITY", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)  throws SQLException{
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException{
 				agent.setFacility(request.getLong("id"), request.getJSONObject("facility"));
 			}
 			
 		});
 		
 		map.put("ICON", new Executor() {
-
+			
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (!agent.setIcon(request.getString("type"), request.getJSONObject("icon"))) {
-					response.setStatus(HttpServletResponse.SC_CONFLICT);
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setIcon(request.getString("type"), request.getJSONObject("icon"));
 				}
 			}
 			
@@ -195,13 +202,16 @@ public class Set implements Executor {
 		map.put("LIMIT", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (!agent.setLimit(request.getLong("id"),
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setLimit(request.getLong("id"),
 						request.getString("oid"),
 						request.getString("index"),
-						request.getInt("limit"))) {
-						response.setStatus(HttpServletResponse.SC_CONFLICT);
-					}
+						request.getInt("limit"));
+				}
 			}
 			
 		});
@@ -209,9 +219,12 @@ public class Set implements Executor {
 		map.put("LINK", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (!agent.setLink(request.getJSONObject("link"))) {
-					response.setStatus(HttpServletResponse.SC_CONFLICT);
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setLink(request.getJSONObject("link"));
 				}
 			}
 			
@@ -220,8 +233,13 @@ public class Set implements Executor {
 		map.put("LOCATION", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) throws JSONException, SQLException {
-				agent.setLocation(request.getLong("node"), request.getJSONObject("location"));
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setLocation(request.getLong("node"), request.getJSONObject("location"));
+				}
 			}
 			
 		});
@@ -229,9 +247,12 @@ public class Set implements Executor {
 		map.put("MANAGER", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (!agent.setManager(request.getLong("node"), request.getString("user"))) {
-					response.setStatus(HttpServletResponse.SC_CONFLICT);
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setManager(request.getLong("node"), request.getString("user"));
 				}
 			}
 			
@@ -242,8 +263,10 @@ public class Set implements Executor {
 			@Override
 			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
 				throws SQLException {
-				if (!agent.setMonitor(request.getLong("id"), request.getString("ip"), request.has("protocol")? request.getString("protocol"): null)) {
-					response.setStatus(HttpServletResponse.SC_CONFLICT);
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setMonitor(request.getLong("id"), request.getString("ip"), request.has("protocol")? request.getString("protocol"): null);
 				}
 			}
 			
@@ -252,21 +275,40 @@ public class Set implements Executor {
 		map.put("NODE", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (!agent.setNode(request.getLong("id"), request.getJSONObject("node"))) {
-					response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setNode(request.getLong("id"), request.getJSONObject("node"));
 				}
 			}
 			
 		});
 		
-
+		map.put("PASSWORD", new Executor () {
+			@Override
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				String id = request.getString("id");
+				
+				if (session.getInt("level") > 0 && !id.equals(session.getString("id"))) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setPassword(id, request.getString("password"));
+				}
+			};
+		});
+		
 		map.put("PATH", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (!agent.setPath(request.getJSONObject("path"))) {
-					response.setStatus(HttpServletResponse.SC_CONFLICT);
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setPath(request.getJSONObject("path"));
 				}
 			}
 			
@@ -275,8 +317,13 @@ public class Set implements Executor {
 		map.put("POSITION", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) throws JSONException, SQLException {
-				agent.setPosition(request.getString("name"), request.getJSONObject("position"));
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setPosition(request.getString("name"), request.getJSONObject("position"));
+				}
 			}
 			
 		});
@@ -284,9 +331,12 @@ public class Set implements Executor {
 		map.put("SETTING", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (!agent.setSetting(request.getString("key"), request.has("value")? request.getString("value"): null)) {
-					response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					agent.setSetting(request.getString("key"), request.has("value")? request.getString("value"): null);
 				}
 			}
 			
@@ -295,14 +345,15 @@ public class Set implements Executor {
 		map.put("RACK", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (request.has("id")) {
-					if (!agent.setRack(request.getInt("id"), request.getJSONObject("rack"))) {
-						response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-					}
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
 				} else {
-					if (!agent.setRack(request.getJSONObject("rack"))) {
-						response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+					if (request.has("id")) {
+						agent.setRack(request.getInt("id"), request.getJSONObject("rack"));
+					} else {
+						agent.setRack(request.getJSONObject("rack"));
 					}
 				}
 			}
@@ -312,9 +363,24 @@ public class Set implements Executor {
 		map.put("USER", new Executor() {
 
 			@Override
-			public void execute(Response response, JSONObject request, JSONObject session, Connection connection) {
-				if (!agent.setUser(request.getString("id"), request.getJSONObject("user"))) {
-					response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+			public void execute(Response response, JSONObject request, JSONObject session, Connection connection)
+				throws SQLException {
+				if (session.getInt("level") > 0) {
+					response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+				} else {
+					if (request.has("user")) {
+						agent.setUser(request.getString("id"), request.getJSONObject("user"));
+					} else if (request.has("auth")) {
+						String id = request.getString("id");
+						
+						if (id.equals(session.getString("id"))) {
+							response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+						} else {
+							agent.setAuth(id, request.getJSONObject("auth"));
+						}
+					} else {
+						throw new JSONException("Value is not set.");
+					}
 				}
 			}
 			
@@ -333,7 +399,7 @@ public class Set implements Executor {
 			
 			try (PreparedStatement pstmt = connection.prepareStatement("INSERT INTO"+
 				" t_audit values (?, 'set', ?, ?);")) {
-				pstmt.setString(1, session.getString("username"));
+				pstmt.setString(1, session.getString("id"));
 				pstmt.setString(2, target);
 				pstmt.setLong(3, System.currentTimeMillis());
 				

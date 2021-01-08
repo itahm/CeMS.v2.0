@@ -9,9 +9,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
-
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletOutputStream;
 import javax.servlet.http.HttpServlet;
@@ -21,8 +18,6 @@ import javax.servlet.http.HttpServletResponse;
 import com.itahm.json.JSONException;
 import com.itahm.json.JSONObject;
 import com.itahm.service.NMS;
-import com.itahm.service.Serviceable;
-import com.itahm.service.SignIn;
 import com.itahm.util.Util;
 
 public class Servlet extends HttpServlet  {
@@ -30,7 +25,7 @@ public class Servlet extends HttpServlet  {
 	private static final long serialVersionUID = 1L;
 	private static String LICENSE = null;
 	private Path root;
-	private final Map<String, Serviceable> services = new LinkedHashMap<>();
+	private NMS service;
 	
 	@Override
 	public void init(ServletConfig config) {
@@ -62,10 +57,8 @@ public class Servlet extends HttpServlet  {
 			}
 		}
 		
-		
 		try {
-			services.put("SIGNIN", new SignIn(root));
-			services.put("NMS", new NMS(root));
+			service= new NMS(root);
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -73,13 +66,7 @@ public class Servlet extends HttpServlet  {
 	
 	@Override
 	public void destroy() {
-		for (String name : this.services.keySet()) {
-			try {
-				this.services.get(name).close();
-			} catch (IOException ioe) {
-				ioe.printStackTrace();
-			}
-		}
+		this.service.close();
 		
 		super.destroy();
 	}
@@ -102,8 +89,6 @@ public class Servlet extends HttpServlet  {
 			try (InputStream is = request.getInputStream()) {
 				byte [] buffer = new byte [cl];
 				JSONObject data;
-				Serviceable service;
-				String name;
 				
 				for (int i=0; i<cl;) {
 					i += is.read(buffer, i, cl - i);
@@ -115,74 +100,37 @@ public class Servlet extends HttpServlet  {
 				data = new JSONObject(new String(buffer, StandardCharsets.UTF_8.name()));
 	
 				if (!data.has("command")) {
-					throw new JSONException("Command not found.");
+					throw new JSONException("Command is not found.");
 				}
 				
-				switch (data.getString("command").toLowerCase()) {
-				case "SERVICE":
-					JSONObject body = new JSONObject();
-					
-					for (String key : this.services.keySet()) {
-						service = this.services.get(key);
-				
-						if (!key.equals("SIGNIN")) {
-							body.put(key.toLowerCase(), service == null? false: true);
-						}
-					}
-					
-					writeResponse(response, body.toString());
-					
-					break;
-				case "START":
-					name = data.getString("service").toUpperCase();
-					
-					if (this.services.containsKey(name)) {
-						service = this.services.get(name);
-						
-						if (service == null) {
-							switch (name) {
-							case "NMS":
-								service = new NMS(this.root.resolve("data"));
-								
-								this.services.put(name, service);
-								
-								break;
-							default :
-								throw new JSONException("Service is reserved");
+				synchronized (this.service) {
+					switch (data.getString("command").toUpperCase()) {
+					case "START":
+						synchronized (this.service) {
+							if (this.service == null) {
+								this.service = new NMS(this.root.resolve("data"));
 							}
-						} else {
-							throw new JSONException("Service is running");
 						}
-					} else {
-						throw new JSONException("Service is not found");
-					}
-					
-					break;
-				case "STOP":
-					name = data.getString("service").toUpperCase();
-					if (this.services.containsKey(name)) {
-						service = this.services.get(name);
+						break;
+					case "STOP":
+						synchronized (this.service) {
+							if (this.service == null) {
+								response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+							} else {
+								this.service.close();
+								
+								this.service = null;
+							}
+						}
 						
-						if (service == null) {
-							throw new JSONException("Service is not running");
+						break;
+					default:
+						if (this.service == null) {
+							response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
 						} else {
-							service.close();
-							
-							this.services.put(name, null);
-						}
-					} else {
-						throw new JSONException("Service is not found");
-					}
-					
-					break;
-				default:
-					for (String key : this.services.keySet()) {
-						if (this.services.get(key).service(new ServletRequest(request), new ServletResponse(response), data)) {
-							return;
+							this.service.service(new ServletRequest(request), new ServletResponse(response), data);
 						}
 					}
-					
-					response.setStatus(HttpServletResponse.SC_NOT_FOUND);
 				}
 			} catch (JSONException | UnsupportedEncodingException e) {				
 				response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
@@ -190,14 +138,12 @@ public class Servlet extends HttpServlet  {
 				writeResponse(response, new JSONObject()
 					.put("error", e.getMessage())
 					.toString());
-			} catch (Exception e) {
-				StringWriter sw = new StringWriter();
-				
-				e.printStackTrace(new PrintWriter(sw));
-				
-				System.out.println(sw);
-				
+			} catch (Exception e) {				
 				response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+				
+				writeResponse(response, new JSONObject()
+					.put("error", e.getMessage())
+					.toString());
 			}
 		}
 	}

@@ -5,8 +5,6 @@ import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.regex.Pattern;
 
 import javax.servlet.http.HttpServletResponse;
@@ -17,8 +15,6 @@ import com.itahm.http.HTTPRequest;
 import com.itahm.json.JSONException;
 import com.itahm.json.JSONObject;
 import com.itahm.service.NMS;
-import com.itahm.service.Serviceable;
-import com.itahm.service.SignIn;
 import com.itahm.util.Util;
 
 public class ITAhM extends HTTPServer {
@@ -27,7 +23,7 @@ public class ITAhM extends HTTPServer {
 	
 	private final Path root;
 	private Boolean isClosed = false;
-	private final Map<String, Serviceable> services = new LinkedHashMap<>();
+	private NMS service;
 	
 	public ITAhM() throws Exception {
 		this("0.0.0.0", 2014);
@@ -62,8 +58,7 @@ public class ITAhM extends HTTPServer {
 			Files.createDirectories(root);
 		}
 		
-		services.put("SIGNIN", new SignIn(root));
-		services.put("NMS", new NMS(root));
+		service =  new NMS(root);
 	}
 	
 	@Override
@@ -100,100 +95,47 @@ public class ITAhM extends HTTPServer {
 			JSONObject data = new JSONObject(new String(request.read(), StandardCharsets.UTF_8.name()));
 			
 			if (!data.has("command")) {
-				throw new JSONException("Command not found.");
+				throw new JSONException("Command is not found.");
 			}
 			
-			Serviceable service;
-			String name;
-			
-			switch (data.getString("command").toUpperCase()) {
-			case "SERVICE":
-				JSONObject body = new JSONObject();
-				
-				for (String key : this.services.keySet()) {
-					service = this.services.get(key);
-			
-					if (!key.equals("SIGNIN")) {
-						body.put(key.toLowerCase(), service == null? false: true);
-					}
-				}
-				
-				response.write(body.toString());
-				
-				return;
-			case "START":
-				name = data.getString("service").toUpperCase();
-				
-				if (this.services.containsKey(name)) {
-					service = this.services.get(name);
-					
-					if (service == null) {
-						switch (name) {
-						case "NMS":
-							try {
-								service = new NMS(this.root.resolve("data"));
-								
-								this.services.put(name, service);
-							} catch (Exception e) {
-								e.printStackTrace();
-								
-								response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-								
-								return;
-							}
-							
-							break;
-						default :
-							throw new JSONException("Service is reserved");
-						}
-					} else {
-						throw new JSONException("Service is running");
-					}
-				} else {
-					throw new JSONException("Service is not found");
-				}
-				
-				return;
-			case "STOP":
-				name = data.getString("service").toUpperCase();
-				if (this.services.containsKey(name)) {
-					service = this.services.get(name);
-					
-					if (service == null) {
-						throw new JSONException("Service is not running");
-					} else {
-						try {
-							service.close();
-							
-							this.services.put(name, null);
-						} catch (IOException ioe) {
-							ioe.printStackTrace();
+			synchronized (this.service) {
+				switch (data.getString("command").toUpperCase()) {
+				case "START":
+					synchronized (this.service) {
+						if (this.service == null) {
+							this.service = new NMS(this.root.resolve("data"));
 						}
 					}
-				} else {
-					throw new JSONException("Service is not found");
-				}
-				
-				return;
-				
-			default:
-				for (String key : this.services.keySet()) {
-					if (this.services.get(key).service(request, response, data)) {
-						return;
+					break;
+				case "STOP":
+					synchronized (this.service) {
+						if (this.service == null) {
+							response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+						} else {
+							this.service.close();
+							
+							this.service = null;
+						}
+					}
+					
+					break;
+				default:
+					if (this.service == null) {
+						response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+					} else {
+						this.service.service(request, response, data);
 					}
 				}
-				
-				response.setStatus(HttpServletResponse.SC_NOT_FOUND);
-				
-				return;
 			}
 		} catch (JSONException | UnsupportedEncodingException e) {
+			response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+			
 			response.write(new JSONObject()
 				.put("error", e.getMessage())
 				.toString());
+		} catch (Exception e) {
+			response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
 		}
-		
-		response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
 	}
 	
 	public void close() {
@@ -205,13 +147,7 @@ public class ITAhM extends HTTPServer {
 			this.isClosed = true;
 		}
 		
-		for (String name : this.services.keySet()) {
-			try {
-				this.services.get(name).close();
-			} catch (IOException ioe) {
-				ioe.printStackTrace();
-			}
-		}
+		this.service.close();	
 		
 		try {
 			super.close();

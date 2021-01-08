@@ -5,10 +5,12 @@ import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.ArrayList;
 
+
 import javax.servlet.http.HttpServletResponse;
 
 import com.itahm.http.Reques;
 import com.itahm.http.Response;
+import com.itahm.http.Session;
 import com.itahm.json.JSONException;
 import com.itahm.json.JSONObject;
 import com.itahm.nms.Bean.Event;
@@ -18,7 +20,7 @@ import com.itahm.nms.H2Agent;
 import com.itahm.smtp.SMTP;
 import com.itahm.util.Listener;
 
-public class NMS implements Serviceable, Listener {
+public class NMS implements Listener {
 
 	/*********************************************************/
 	public final static long EXPIRE = -1L;
@@ -26,10 +28,13 @@ public class NMS implements Serviceable, Listener {
 	public final static String VERSION = "CeMS v2.0";
 	/*********************************************************/
 	
+	private final static int SESS_TIMEOUT = 3600;
+	
 	private Commander agent;
 	public final static SMTP smtpServer = new SMTP();
 	private final Command command;
 	private String event = null;
+	
 	
 	public NMS(Path path) throws Exception {
 		agent = new H2Agent(this, path);
@@ -53,7 +58,6 @@ public class NMS implements Serviceable, Listener {
 		command = new Command(agent, path);
 	}
 	
-	@Override
 	public void close() {
 		try {
 			this.command.close();
@@ -68,11 +72,29 @@ public class NMS implements Serviceable, Listener {
 		}
 	}
 
-	@Override
-	public boolean service(Reques request, Response response, JSONObject data) {	
+	public void service(Reques request, Response response, JSONObject data) {
+		Session session = request.getSession(false);
+		
 		try {
-			switch (data.getString("command").toUpperCase()) {				
-			case "LISTEN":
+			if (session == null) {
+				JSONObject user = this.agent.signIn(data.getString("id"), data.getString("password"));
+			
+				if (user == null) {
+					response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+				} else {
+					session = request.getSession(true);
+					
+					session.setAttribute("account", user);
+					
+					session.setMaxInactiveInterval(SESS_TIMEOUT);
+					
+					response.setHeader("Set-Session", session.id);
+					
+					response.write(user.toString());
+				}
+			} else {
+				switch (data.getString("command").toUpperCase()) {
+				case "LISTEN":
 					JSONObject event = null;
 					
 					if (data.has("eventID")) {
@@ -100,20 +122,34 @@ public class NMS implements Serviceable, Listener {
 					else {
 						response.write(event.toString());
 					}
-				
-				break;
-			default:
-				return this.command.execute(request, response, data);
+					
+					break;
+				case "SIGNIN":
+					response.write((JSONObject)session.getAttribute("account"));
+					
+					break;
+				case "SIGNOUT":
+					session.invalidate();
+					
+					break;
+				default:
+					
+					this.command.execute(request, response, data);
+				}
 			}
-			
-		} catch (JSONException jsone) {
-			response.write(new JSONObject().
-				put("error", jsone.getMessage()).toString());
-			
+		} catch (JSONException e) {
 			response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+			
+			response.write(new JSONObject().
+				put("error", e.getMessage()));
+		} catch (Exception e) {
+			response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+			
+			response.write(new JSONObject().
+				put("error", e.getMessage()));
+			
+			e.printStackTrace();
 		}
-	
-		return true;
 	}
 		
 	@Override
@@ -131,29 +167,26 @@ public class NMS implements Serviceable, Listener {
 					try {
 						userData = this.agent.getUser(true);
 										
-						if (userData != null) {
-							ArrayList<String> list = new ArrayList<>();
-							JSONObject user;
+						ArrayList<String> list = new ArrayList<>();
+						JSONObject user;
+						
+						for (Object name : userData.keySet()) {
+							user = userData.getJSONObject((String)name);
 							
-							for (Object name : userData.keySet()) {
-								user = userData.getJSONObject((String)name);
-								
-								if (user.has("email")) {
-									list.add(user.getString("email"));
-								}
+							if (user.has("email")) {
+								list.add(user.getString("email"));
 							}
+						}
+						
+						if (list.size() > 0) {
+							String [] sa = new String [list.size()];
 							
-							if (list.size() > 0) {
-								String [] sa = new String [list.size()];
-								
-								list.toArray(sa);
-								
-								smtpServer.send(String.format("%s %s",
-									event.has("name")? event.getString("name"):
-									event.has("ip")? event.getString("ip"): "",
-									event.getString("message")), sa);
-							}
+							list.toArray(sa);
 							
+							smtpServer.send(String.format("%s %s",
+								event.has("name")? event.getString("name"):
+								event.has("ip")? event.getString("ip"): "",
+								event.getString("message")), sa);
 						}
 					} catch (SQLException sqle) {
 						sqle.printStackTrace();
