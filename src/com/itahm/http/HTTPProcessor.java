@@ -27,7 +27,8 @@ public class HTTPProcessor extends Thread {
 	@Override
 	public void run() {
 		HTTPResponse response = new HTTPResponse();
-		String origin = request.getHeader(Header.ORIGIN.toString());
+		//String origin = request.getHeader(Header.ORIGIN.toString());
+		String origin = "http://cems.corebrg.com";
 		
 		switch(this.request.getMethod().toUpperCase()) {
 		case "GET":
